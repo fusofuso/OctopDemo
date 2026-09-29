@@ -3,6 +3,7 @@ build/
 !desktop/src/build/
 !desktop/src/build/**
 dist/
+offline-dist/
 
 # OS
 .DS_Store
