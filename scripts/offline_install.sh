@@ -16,6 +16,7 @@
 #   --port N            绑定端口（默认 8088）
 #   --service           安装并启动 systemd 服务（需要 root）
 #   --skip-init         跳过数据库与管理员初始化
+#   --skip-verify       跳过离线包完整性校验（仅在确认包可信时使用）
 #   -h, --help          显示帮助
 #
 # 说明:
@@ -23,6 +24,10 @@
 #   - crcmod / evdev 是源码包，需要 gcc 现场编译（Python 头文件由离线解释器自带）。
 # =============================================================================
 set -euo pipefail
+
+# 不让解释器把字节码缓存写回离线包：否则会就地改写包内 __pycache__/*.pyc，
+# 导致下次安装时完整性校验误报失败。
+export PYTHONDONTWRITEBYTECODE=1
 
 BUNDLE_DIR=""
 OCTOP_HOME="${OCTOP_HOME:-$HOME/.octop}"
@@ -32,13 +37,14 @@ ADMIN_USERNAME="${OCTOP_ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${OCTOP_ADMIN_PASSWORD:-}"
 INSTALL_SERVICE=0
 SKIP_INIT=0
+SKIP_VERIFY=0
 
 info() { printf '\033[0;32m[install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[0;33m[install]\033[0m %s\n' "$*"; }
 die() { printf '\033[0;31m[install]\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '3,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
@@ -51,12 +57,13 @@ while [ $# -gt 0 ]; do
         --port) BIND_PORT="${2:-}"; shift 2 ;;
         --service) INSTALL_SERVICE=1; shift ;;
         --skip-init) SKIP_INIT=1; shift ;;
+        --skip-verify) SKIP_VERIFY=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "未知参数: $1（用 --help 查看用法）" ;;
     esac
 done
 
-# ── 定位并校验离线包 ────────────────────────────────────────────────────────
+# ── 定位离线包 ──────────────────────────────────────────────────────────────
 if [ -z "$BUNDLE_DIR" ]; then
     BUNDLE_DIR="$(find . -maxdepth 2 -type d -name 'octop-offline-*' 2>/dev/null | head -1 || true)"
 fi
@@ -72,12 +79,22 @@ info "离线包: $BUNDLE_DIR"
 info "安装目录: $OCTOP_HOME"
 
 # ── 完整性校验 ──────────────────────────────────────────────────────────────
-if [ -f "$BUNDLE_DIR/MANIFEST.sha256" ]; then
-    if ( cd "$BUNDLE_DIR" && sha256sum -c MANIFEST.sha256 --quiet ); then
-        info "离线包完整性校验通过"
-    else
-        die "离线包校验失败（文件损坏或传输不完整）"
+# __pycache__ / *.pyc 由解释器运行时生成并会就地刷新，属预期行为，不计入校验：
+# 校验清单生成时已排除，这里对旧包再做一次过滤（兼容早期打包的离线包）。
+if [ "$SKIP_VERIFY" -eq 1 ]; then
+    warn "已跳过离线包完整性校验（--skip-verify）"
+elif [ -f "$BUNDLE_DIR/MANIFEST.sha256" ]; then
+    VERIFY_OUT="$( cd "$BUNDLE_DIR" && sha256sum -c MANIFEST.sha256 --quiet 2>&1 || true )"
+    REAL_FAIL="$(printf '%s\n' "$VERIFY_OUT" \
+        | grep -E '(失败|FAILED)$' \
+        | grep -v '__pycache__' \
+        | grep -v '\.pyc' \
+        || true)"
+    if [ -n "$REAL_FAIL" ]; then
+        printf '%s\n' "$REAL_FAIL" >&2
+        die "离线包校验失败（文件损坏或传输不完整）；确认包可信时可用 --skip-verify 继续"
     fi
+    info "离线包完整性校验通过"
 fi
 
 # ── 定位离线 Python 解释器 ──────────────────────────────────────────────────
@@ -235,3 +252,9 @@ echo "    sudo $OCTOP_HOME/bin/octop service start"
 echo ""
 echo "  新开终端后可直接使用 octop 命令（PATH 已写入 ~/.bashrc）"
 echo ""
+if [ "${BIND_HOST:-}" != "0.0.0.0" ]; then
+    warn "当前绑定地址为 ${BIND_HOST:-127.0.0.1}，只有本机可访问。"
+    warn "如需内网其他机器访问，重新执行并加 --host 0.0.0.0，"
+    warn "或修改 $OCTOP_HOME/config.json 的 bind_host 后重启服务。"
+    echo ""
+fi

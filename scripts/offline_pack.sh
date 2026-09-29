@@ -6,12 +6,15 @@
 #       wheel、uv 与构建工具）打成单个离线包，供无外网的内网服务器安装。
 #
 # 用法（在仓库根目录执行）:
-#   bash scripts/offline_pack.sh
+#   bash scripts/offline_pack.sh           # 打包一次，产物按打包时间归档
+#   bash scripts/offline_pack.sh --list    # 列出已归档的所有离线包
 #
-# 产物:
-#   offline-dist/octop-offline-<arch>-<version>/            离线包目录
-#   offline-dist/octop-offline-<arch>-<version>.tar.gz      传输用的压缩包
-#   offline-dist/octop-offline-<arch>-<version>.tar.gz.sha256
+# 产物（每次打包生成一个以打包时间命名的目录，全部产物都在其中）:
+#   offline-dist/
+#   └── <YYYYmmdd-HHMMSS>/
+#       ├── octop-offline-<arch>-<version>/            离线包目录（含 MANIFEST.sha256）
+#       ├── octop-offline-<arch>-<version>.tar.gz      传输用的压缩包
+#       └── octop-offline-<arch>-<version>.tar.gz.sha256
 #
 # 环境变量:
 #   OCTOP_ARCH        目标 CPU 架构（默认 aarch64）
@@ -40,6 +43,10 @@ info() { printf '\033[0;32m[pack]\033[0m %s\n' "$*"; }
 warn() { printf '\033[0;33m[pack]\033[0m %s\n' "$*"; }
 die() { printf '\033[0;31m[pack]\033[0m %s\n' "$*" >&2; exit 1; }
 
+usage() {
+    sed -n '3,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
 command -v uv >/dev/null 2>&1 || die "未找到 uv，请先安装：https://docs.astral.sh/uv/"
 [ -f pyproject.toml ] && [ -f uv.lock ] || die "请在仓库根目录执行本脚本"
 
@@ -47,7 +54,52 @@ VERSION="$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' pyproject.toml | head -1)"
 [ -n "$VERSION" ] || die "无法从 pyproject.toml 读取版本号"
 
 BUNDLE_NAME="octop-offline-${OCTOP_ARCH}-${VERSION}"
-BUNDLE_DIR="$OUT_DIR/$BUNDLE_NAME"
+
+# ── 参数解析 ────────────────────────────────────────────────────────────────
+LIST_ONLY=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --list) LIST_ONLY=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "未知参数: $1（用 --help 查看用法）" ;;
+    esac
+done
+
+# ── --list：列出已归档的离线包（不做打包）────────────────────────────────────
+if [ "$LIST_ONLY" -eq 1 ]; then
+    printf '%-20s %-36s %8s  %s\n' "打包时间" "包名" "大小" "状态"
+    printf '%s\n' "----------------------------------------------------------------------------------------"
+    found=0
+    for dir in "$OUT_DIR"/*/; do
+        [ -d "$dir" ] || continue
+        found=1
+        stamp="$(basename "${dir%/}")"
+        tarball="$(find "$dir" -maxdepth 1 -name 'octop-offline-*.tar.gz' 2>/dev/null | head -1)"
+        if [ -z "$tarball" ]; then
+            printf '%-20s %-36s %8s  %s\n' "$stamp" "-" "-" "未打包完成"
+            continue
+        fi
+        name="$(basename "$tarball" .tar.gz)"
+        size="$(du -h "$tarball" | cut -f1)"
+        sumfile="$(basename "$tarball").sha256"
+        if [ ! -f "$dir/$sumfile" ]; then
+            status="缺少校验文件"
+        elif ( cd "$dir" && sha256sum -c "$sumfile" --quiet ) >/dev/null 2>&1; then
+            status="校验通过"
+        else
+            status="校验失败"
+        fi
+        printf '%-20s %-36s %8s  %s\n' "$stamp" "$name" "$size" "$status"
+    done
+    [ "$found" -eq 1 ] || info "暂无离线包（$OUT_DIR 为空）"
+    exit 0
+fi
+
+# 每次打包归档到「以打包时间命名」的目录，所有产物都放在其中
+STAMP="$(date +%Y%m%d-%H%M%S)"
+RUN_DIR="$OUT_DIR/$STAMP"
+BUNDLE_DIR="$RUN_DIR/$BUNDLE_NAME"
+
 PLATFORM_ARGS=(
     --platform manylinux_2_28_aarch64
     --platform manylinux_2_17_aarch64
@@ -61,7 +113,7 @@ _pip() {
 }
 
 info "Octop 版本: $VERSION / 目标架构: $OCTOP_ARCH / Python: $OCTOP_PY"
-info "产物目录: $BUNDLE_DIR"
+info "归档目录: $RUN_DIR"
 
 # ── 1. 前端产物（平台无关，可跨架构复用）─────────────────────────────────────
 if [ ! -f src/octop/dashboard/index.html ]; then
@@ -111,25 +163,33 @@ _pip download -q --no-deps --only-binary=:all: \
 
 # ── 7. 校验清单与压缩包 ─────────────────────────────────────────────────────
 info "[7/7] 生成校验清单并打包..."
-( cd "$BUNDLE_DIR" && find . -type f ! -name MANIFEST.sha256 | sort | xargs sha256sum > MANIFEST.sha256 )
+# 排除 __pycache__/*.pyc：解释器首次运行会就地刷新字节码缓存，
+# 那属于预期行为，不应计入完整性校验（否则二次安装必然误报校验失败）。
+( cd "$BUNDLE_DIR" && find . -type f \
+    ! -name MANIFEST.sha256 \
+    ! -path '*/__pycache__/*' \
+    ! -name '*.pyc' \
+    | sort | xargs sha256sum > MANIFEST.sha256 )
 
 WHL_COUNT="$(find "$BUNDLE_DIR/wheelhouse" -name '*.whl' | wc -l)"
 SDIST_COUNT="$(find "$BUNDLE_DIR/wheelhouse" -name '*.tar.gz' | wc -l)"
 
-tar -czf "$OUT_DIR/$BUNDLE_NAME.tar.gz" -C "$OUT_DIR" "$BUNDLE_NAME"
-( cd "$OUT_DIR" && sha256sum "$BUNDLE_NAME.tar.gz" > "$BUNDLE_NAME.tar.gz.sha256" )
+tar -czf "$RUN_DIR/$BUNDLE_NAME.tar.gz" -C "$RUN_DIR" "$BUNDLE_NAME"
+( cd "$RUN_DIR" && sha256sum "$BUNDLE_NAME.tar.gz" > "$BUNDLE_NAME.tar.gz.sha256" )
 
 # ── 完成 ────────────────────────────────────────────────────────────────────
 echo ""
 info "离线包制作完成"
-printf '  %-14s %s\n' "目录:" "$BUNDLE_DIR"
-printf '  %-14s %s\n' "压缩包:" "$OUT_DIR/$BUNDLE_NAME.tar.gz"
+printf '  %-14s %s\n' "归档目录:" "$RUN_DIR"
+printf '  %-14s %s\n' "压缩包:" "$RUN_DIR/$BUNDLE_NAME.tar.gz"
 printf '  %-14s %s\n' "wheel:" "$WHL_COUNT 个"
 printf '  %-14s %s\n' "sdist:" "$SDIST_COUNT 个（内网需现场编译）"
-printf '  %-14s %s\n' "大小:" "$(du -sh "$OUT_DIR/$BUNDLE_NAME.tar.gz" | cut -f1)"
+printf '  %-14s %s\n' "大小:" "$(du -sh "$RUN_DIR/$BUNDLE_NAME.tar.gz" | cut -f1)"
+echo ""
+echo "查看历史离线包: bash scripts/offline_pack.sh --list"
 echo ""
 echo "下一步："
-echo "  1) 校验并传输压缩包与 .sha256 文件到内网机器"
+echo "  1) 传输压缩包与 .sha256 文件到内网机器"
 echo "  2) 在内网解压后执行："
 echo "       bash scripts/offline_install.sh --bundle ./$BUNDLE_NAME"
 echo ""
