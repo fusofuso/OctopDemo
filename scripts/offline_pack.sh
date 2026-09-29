@@ -6,15 +6,19 @@
 #       wheel、uv 与构建工具）打成单个离线包，供无外网的内网服务器安装。
 #
 # 用法（在仓库根目录执行）:
-#   bash scripts/offline_pack.sh           # 打包一次，产物按打包时间归档
-#   bash scripts/offline_pack.sh --list    # 列出已归档的所有离线包
+#   bash scripts/offline_pack.sh                # 全量打包（首次安装用）
+#   bash scripts/offline_pack.sh --wheel-only   # 增量打包：只出 octop wheel，约 17M
+#   bash scripts/offline_pack.sh --list         # 列出已归档的所有离线包
 #
 # 产物（每次打包生成一个以打包时间命名的目录，全部产物都在其中）:
-#   offline-dist/
-#   └── <YYYYmmdd-HHMMSS>/
-#       ├── octop-offline-<arch>-<version>/            离线包目录（含 MANIFEST.sha256）
-#       ├── octop-offline-<arch>-<version>.tar.gz      传输用的压缩包
-#       └── octop-offline-<arch>-<version>.tar.gz.sha256
+#   全量包  offline-dist/<YYYYmmdd-HHMMSS>/
+#   ├── octop-offline-<arch>-<version>/            离线包目录（含 MANIFEST.sha256）
+#   ├── octop-offline-<arch>-<version>.tar.gz      传输用的压缩包
+#   └── octop-offline-<arch>-<version>.tar.gz.sha256
+#
+#   增量包  offline-dist/<YYYYmmdd-HHMMSS>-wheel/
+#   ├── octop-<version>-py3-none-any.whl           供 offline_update.sh 更新用
+#   └── octop-<version>-py3-none-any.whl.sha256
 #
 # 环境变量:
 #   OCTOP_ARCH        目标 CPU 架构（默认 aarch64）
@@ -44,7 +48,7 @@ warn() { printf '\033[0;33m[pack]\033[0m %s\n' "$*"; }
 die() { printf '\033[0;31m[pack]\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '3,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,32p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 command -v uv >/dev/null 2>&1 || die "未找到 uv，请先安装：https://docs.astral.sh/uv/"
@@ -57,9 +61,11 @@ BUNDLE_NAME="octop-offline-${OCTOP_ARCH}-${VERSION}"
 
 # ── 参数解析 ────────────────────────────────────────────────────────────────
 LIST_ONLY=0
+WHEEL_ONLY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --list) LIST_ONLY=1; shift ;;
+        --wheel-only) WHEEL_ONLY=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "未知参数: $1（用 --help 查看用法）" ;;
     esac
@@ -67,21 +73,28 @@ done
 
 # ── --list：列出已归档的离线包（不做打包）────────────────────────────────────
 if [ "$LIST_ONLY" -eq 1 ]; then
-    printf '%-20s %-36s %8s  %s\n' "打包时间" "包名" "大小" "状态"
-    printf '%s\n' "----------------------------------------------------------------------------------------"
+    printf '%-22s %-6s %-38s %8s  %s\n' "打包时间" "类型" "包名" "大小" "状态"
+    printf '%s\n' "--------------------------------------------------------------------------------------------------------"
     found=0
     for dir in "$OUT_DIR"/*/; do
         [ -d "$dir" ] || continue
         found=1
         stamp="$(basename "${dir%/}")"
         tarball="$(find "$dir" -maxdepth 1 -name 'octop-offline-*.tar.gz' 2>/dev/null | head -1)"
-        if [ -z "$tarball" ]; then
-            printf '%-20s %-36s %8s  %s\n' "$stamp" "-" "-" "未打包完成"
+        wheelfile="$(find "$dir" -maxdepth 1 -name 'octop-*.whl' 2>/dev/null | head -1)"
+        if [ -n "$tarball" ]; then
+            kind="全量"
+            artifact="$tarball"
+        elif [ -n "$wheelfile" ]; then
+            kind="增量"
+            artifact="$wheelfile"
+        else
+            printf '%-22s %-6s %-38s %8s  %s\n' "$stamp" "-" "-" "-" "未打包完成"
             continue
         fi
-        name="$(basename "$tarball" .tar.gz)"
-        size="$(du -h "$tarball" | cut -f1)"
-        sumfile="$(basename "$tarball").sha256"
+        name="$(basename "$artifact")"
+        size="$(du -h "$artifact" | cut -f1)"
+        sumfile="$(basename "$artifact").sha256"
         if [ ! -f "$dir/$sumfile" ]; then
             status="缺少校验文件"
         elif ( cd "$dir" && sha256sum -c "$sumfile" --quiet ) >/dev/null 2>&1; then
@@ -89,7 +102,7 @@ if [ "$LIST_ONLY" -eq 1 ]; then
         else
             status="校验失败"
         fi
-        printf '%-20s %-36s %8s  %s\n' "$stamp" "$name" "$size" "$status"
+        printf '%-22s %-6s %-38s %8s  %s\n' "$stamp" "$kind" "$name" "$size" "$status"
     done
     [ "$found" -eq 1 ] || info "暂无离线包（$OUT_DIR 为空）"
     exit 0
@@ -112,17 +125,58 @@ _pip() {
     uv run --no-project --index-url "$PYPI_INDEX" --with pip python -m pip "$@"
 }
 
+# 前端产物是否需要重建：缺失，或 dashboard 源码比已有产物新
+_frontend_stale() {
+    [ -f src/octop/dashboard/index.html ] || return 0
+    [ -n "$(find dashboard/src dashboard/index.html dashboard/package.json \
+        -newer src/octop/dashboard/index.html 2>/dev/null | head -1)" ]
+}
+
+_ensure_frontend() {
+    if _frontend_stale; then
+        info "构建前端产物（npm ci && npm run build）..."
+        command -v npm >/dev/null 2>&1 || die "缺少 npm，无法构建前端；请安装 Node.js"
+        ( cd dashboard && npm ci && NODE_ENV=production npm run build )
+    else
+        info "复用已有前端产物 src/octop/dashboard/"
+    fi
+}
+
+# ── 增量模式：只重建 octop wheel，供内网 offline_update.sh 做轻量更新 ────────
+if [ "$WHEEL_ONLY" -eq 1 ]; then
+    RUN_DIR="$OUT_DIR/${STAMP}-wheel"
+    info "增量打包：octop wheel 为 py3-none-any，与目标架构无关"
+    _ensure_frontend
+    info "构建 octop wheel（版本 $VERSION）..."
+    rm -rf "$RUN_DIR"
+    mkdir -p "$RUN_DIR"
+    uv build --out-dir "$RUN_DIR"
+    rm -f "$RUN_DIR/octop-${VERSION}.tar.gz"
+    WHEEL_FILE="$(find "$RUN_DIR" -maxdepth 1 -name 'octop-*.whl' | head -1)"
+    [ -n "$WHEEL_FILE" ] || die "wheel 构建失败"
+    ( cd "$RUN_DIR" && sha256sum "$(basename "$WHEEL_FILE")" > "$(basename "$WHEEL_FILE").sha256" )
+    echo ""
+    info "增量包制作完成"
+    printf '  %-14s %s\n' "归档目录:" "$RUN_DIR"
+    printf '  %-14s %s\n' "wheel:" "$(basename "$WHEEL_FILE")"
+    printf '  %-14s %s\n' "大小:" "$(du -h "$WHEEL_FILE" | cut -f1)"
+    echo ""
+    echo "下一步："
+    echo "  1) 传输整个目录（含 .sha256）到内网"
+    echo "  2) 在内网执行："
+    echo "       bash scripts/offline_update.sh --bundle ./${STAMP}-wheel"
+    echo ""
+    warn "仅在依赖未变（pyproject.toml / uv.lock 未改动）时适用；"
+    warn "依赖有变化时请改用全量打包并重跑 offline_install.sh。"
+    exit 0
+fi
+
 info "Octop 版本: $VERSION / 目标架构: $OCTOP_ARCH / Python: $OCTOP_PY"
 info "归档目录: $RUN_DIR"
 
 # ── 1. 前端产物（平台无关，可跨架构复用）─────────────────────────────────────
-if [ ! -f src/octop/dashboard/index.html ]; then
-    info "[1/7] 构建前端产物..."
-    command -v npm >/dev/null 2>&1 || die "缺少 npm，无法构建前端；请安装 Node.js 或先用 make build-frontend"
-    ( cd dashboard && npm ci && NODE_ENV=production npm run build )
-else
-    info "[1/7] 复用已有前端产物 src/octop/dashboard/"
-fi
+info "[1/7] 准备前端产物..."
+_ensure_frontend
 
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR/wheelhouse" "$BUNDLE_DIR/dist" "$BUNDLE_DIR/python"
