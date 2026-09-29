@@ -12,20 +12,27 @@ import {
 export const UNI_TOKEN_PARAM = "auth.token";
 
 /**
- * Build the CMS login relay URL for the current origin.
+ * Build the CMS login relay URL.
  *
- * Mirrors the CMS hand-off contract: ``RETURN_HOST`` is the origin plus the
- * deployment path prefix, ``RETURN_URL`` is the page to come back to.
+ * Mirrors the CMS hand-off contract: ``RETURN_HOST`` is the local origin plus
+ * the deployment path prefix, ``RETURN_URL`` is the page to come back to.
+ *
+ * ``login_path`` may be an absolute ``http(s)://`` URL — required when Octop is
+ * reached on a different origin than the relay (e.g. Octop on ``:8088`` behind a
+ * cloud gateway on ``:80``).
  */
 export function buildUniLoginUrl(
   status: UniAuthStatus,
   currentUrl: string,
 ): string {
-  const origin = `${window.location.protocol}//${window.location.host}`;
+  const origin = window.location.origin;
+  const relay = /^https?:\/\//i.test(status.login_path)
+    ? status.login_path
+    : `${origin}${status.login_path}`;
   const returnHost = `${origin}${status.return_host_suffix}`;
-  return `${
-    status.login_path
-  }?RETURN_HOST=${returnHost}&RETURN_URL=${encodeURIComponent(currentUrl)}`;
+  return `${relay}?RETURN_HOST=${returnHost}&RETURN_URL=${encodeURIComponent(
+    currentUrl,
+  )}`;
 }
 
 /** Read the one-time CMS token from the current URL, if present. */

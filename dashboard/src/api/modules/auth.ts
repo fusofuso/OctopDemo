@@ -89,9 +89,12 @@ export interface OidcStatus {
 /** Intranet unified-auth (CMS) relay settings for the login page. */
 export interface UniAuthStatus {
   enabled: boolean;
-  /** CMS relay page, relative to the dashboard origin. */
+  /**
+   * CMS relay page. A relative path is resolved against the dashboard origin;
+   * an absolute ``http(s)://`` URL is used verbatim.
+   */
   login_path: string;
-  /** Suffix appended to the origin when building ``RETURN_HOST``. */
+  /** Suffix appended to the local origin when building ``RETURN_HOST``. */
   return_host_suffix: string;
 }
 

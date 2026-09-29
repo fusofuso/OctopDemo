@@ -115,9 +115,11 @@ class UniAuthConfig:
     """
 
     enabled: bool = False
-    # CMS login relay page, relative to the dashboard origin.
+    # CMS login relay page. A relative path is resolved against the dashboard
+    # origin; an absolute ``http(s)://`` URL is used verbatim, which is needed
+    # when Octop and the relay are served from different origins.
     login_path: str = "/cmsCrm/crm/uni/oa/login"
-    # Extra suffix appended to the origin when building ``RETURN_HOST``.
+    # Extra suffix appended to the local origin when building ``RETURN_HOST``.
     return_host_suffix: str = "/cmsCrm"
     # Expected ``iss`` / ``aud`` claims; an empty string disables that check.
     issuer: str = "cms"

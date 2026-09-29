@@ -9,12 +9,26 @@ const BASE: UniAuthStatus = {
 };
 
 describe("buildUniLoginUrl", () => {
-  it("keeps the relay path relative to the current origin", () => {
+  it("resolves a relative relay path against the current origin", () => {
     const url = buildUniLoginUrl(BASE, "http://octop.example/chat");
     expect(url).toBe(
-      `/cmsCrm/crm/uni/oa/login?RETURN_HOST=${
+      `${window.location.origin}/cmsCrm/crm/uni/oa/login?RETURN_HOST=${
         window.location.origin
       }/cmsCrm&RETURN_URL=${encodeURIComponent("http://octop.example/chat")}`,
+    );
+  });
+
+  it("uses an absolute relay path verbatim", () => {
+    const url = buildUniLoginUrl(
+      { ...BASE, login_path: "http://172.253.170.71/cmsCrm/crm/uni/oa/login" },
+      "http://172.253.170.71:8088/login",
+    );
+    expect(url).toBe(
+      `http://172.253.170.71/cmsCrm/crm/uni/oa/login?RETURN_HOST=${
+        window.location.origin
+      }/cmsCrm&RETURN_URL=${encodeURIComponent(
+        "http://172.253.170.71:8088/login",
+      )}`,
     );
   });
 
