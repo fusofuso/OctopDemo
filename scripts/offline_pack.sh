@@ -132,11 +132,25 @@ _frontend_stale() {
         -newer src/octop/dashboard/index.html 2>/dev/null | head -1)" ]
 }
 
+# node_modules 是否必须重装：缺失，或 package-lock.json 比已安装的更新。
+# 已有依赖时跳过 npm ci —— 它会先删除整个 node_modules，在启用了批量删除
+# 保护的环境里会直接失败（SAFE_DELETE_BULK_CONFIRM_REQUIRED）。
+_need_npm_ci() {
+    [ -d dashboard/node_modules ] || return 0
+    [ -f dashboard/node_modules/.package-lock.json ] || return 0
+    [ dashboard/package-lock.json -nt dashboard/node_modules/.package-lock.json ]
+}
+
 _ensure_frontend() {
     if _frontend_stale; then
-        info "构建前端产物（npm ci && npm run build）..."
         command -v npm >/dev/null 2>&1 || die "缺少 npm，无法构建前端；请安装 Node.js"
-        ( cd dashboard && npm ci && NODE_ENV=production npm run build )
+        if _need_npm_ci; then
+            info "安装前端依赖并构建（npm ci && npm run build）..."
+            ( cd dashboard && npm ci && NODE_ENV=production npm run build )
+        else
+            info "构建前端产物（复用已有 node_modules，package-lock.json 未变）..."
+            ( cd dashboard && NODE_ENV=production npm run build )
+        fi
     else
         info "复用已有前端产物 src/octop/dashboard/"
     fi
