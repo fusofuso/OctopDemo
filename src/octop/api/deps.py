@@ -67,6 +67,7 @@ _JWT_EXEMPT_PREFIXES = (
     "/api/setup/",
     "/api/health/",
     "/api/i18n/",
+    "/api/auth/uni/",
     "/api/connectors/oauth/callback",
     "/api/internal/mcp/",
 )

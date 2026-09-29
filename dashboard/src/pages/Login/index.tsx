@@ -10,7 +10,11 @@ import {
   setAuthToken,
   setRememberLoginPreference,
 } from "../../api";
-import { authApi, type OauthProviderStatus } from "../../api/modules/auth";
+import {
+  authApi,
+  type OauthProviderStatus,
+  type UniAuthStatus,
+} from "../../api/modules/auth";
 import { apiErrorMessage } from "../../utils/apiError";
 import { refreshServerLabels } from "../../i18n";
 import { applyUserLocale, applyGuestLocale } from "../../utils/locale";
@@ -26,6 +30,12 @@ import dingtalkIcon from "../../assets/channels/dingtalk.svg";
 import wecomIcon from "../../assets/channels/wecom.svg";
 import googleIcon from "../../assets/providers/google.svg";
 import CaptchaField, { type CaptchaFieldHandle } from "./CaptchaField";
+import {
+  buildUniLoginUrl,
+  completeUniLogin,
+  readUniToken,
+  stripUniToken,
+} from "./uniAuth";
 import ForgotPasswordModal from "./ForgotPasswordModal";
 import { type PublicCaptchaConfig } from "./captchaAdapters";
 
@@ -79,6 +89,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [providers, setProviders] = useState<OauthProviderStatus[]>([]);
   const [ssoLoadingKind, setSsoLoadingKind] = useState<string | null>(null);
+  const [uniStatus, setUniStatus] = useState<UniAuthStatus | null>(null);
+  const [uniLoading, setUniLoading] = useState(false);
   const [captchaReady, setCaptchaReady] = useState(false);
   const [captchaResetKey, setCaptchaResetKey] = useState(0);
   const [showForgotHelp, setShowForgotHelp] = useState(false);
@@ -93,16 +105,42 @@ export default function LoginPage() {
 
   useEffect(() => {
     let cancelled = false;
-    authApi
-      .getAuthStatus()
-      .then((status) => {
+
+    const bootstrap = async () => {
+      // Coming back from the CMS login relay with ``?auth.token=...``.
+      const uniToken = readUniToken();
+      if (uniToken) {
+        stripUniToken();
+        setUniLoading(true);
+        try {
+          const res = await completeUniLogin(uniToken);
+          if (cancelled) return;
+          await applyUserLocale(res.user.locale);
+          void refreshServerLabels(res.user.locale);
+          navigate("/chat", { replace: true });
+          return;
+        } catch (err) {
+          if (cancelled) return;
+          setUniLoading(false);
+          message.error(apiErrorMessage(err, t("login.uniAuthFailed"), t));
+        }
+      }
+
+      try {
+        const status = await authApi.getAuthStatus();
         if (cancelled) return;
         if (status.setup_required) {
           clearAuthToken();
           navigate("/setup", { replace: true });
           return;
         }
-        // Only probe OIDC / captcha after setup is done — otherwise lockdown 503s.
+        // Only probe SSO / captcha after setup is done — otherwise lockdown 503s.
+        authApi
+          .getUniStatus()
+          .then((next) => {
+            if (!cancelled) setUniStatus(next);
+          })
+          .catch(() => {});
         authApi
           .getOauthStatus()
           .then((next) => {
@@ -119,16 +157,18 @@ export default function LoginPage() {
           .catch(() => {
             if (!cancelled) setCaptcha({ provider: "slider" });
           });
-      })
-      .catch(() => {
+      } catch {
         // Backend unreachable — let the user attempt login and show a real
         // error from the request itself; redirecting blindly to /setup
         // would mask the actual problem.
-      });
+      }
+    };
+
+    void bootstrap();
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
+  }, [navigate, t]);
 
   useEffect(() => {
     const code = searchParams.get("oidc_error");
@@ -171,6 +211,13 @@ export default function LoginPage() {
   const resetCaptcha = () => {
     setCaptchaReady(false);
     setCaptchaResetKey((k) => k + 1);
+  };
+
+  const onUniAuth = () => {
+    if (!uniStatus) return;
+    setRememberLoginPreference(remember);
+    setUniLoading(true);
+    window.location.href = buildUniLoginUrl(uniStatus, window.location.href);
   };
 
   const onSso = async (kind: string) => {
@@ -283,6 +330,48 @@ export default function LoginPage() {
         >
           {t("login.title")}
         </h2>
+
+        {uniStatus?.enabled && (
+          <>
+            <Button
+              type="primary"
+              size="large"
+              block
+              icon={<KeyRound size={18} />}
+              loading={uniLoading}
+              onClick={onUniAuth}
+              style={{ borderRadius: 10, height: 44, fontWeight: 500 }}
+            >
+              {t("login.uniAuth")}
+            </Button>
+            <div
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                color: "var(--fn-text-tertiary)",
+                fontSize: 13,
+              }}
+            >
+              <span
+                style={{
+                  flex: 1,
+                  height: 1,
+                  background: "var(--fn-border-primary)",
+                }}
+              />
+              {t("login.or")}
+              <span
+                style={{
+                  flex: 1,
+                  height: 1,
+                  background: "var(--fn-border-primary)",
+                }}
+              />
+            </div>
+          </>
+        )}
 
         <Input
           prefix={

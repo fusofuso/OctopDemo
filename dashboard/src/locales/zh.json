@@ -4946,6 +4946,8 @@
     "slideVerified": "验证通过",
     "unsupportedCaptcha": "当前客户端不支持此验证码。请使用支持的客户端登录。",
     "or": "或",
+    "uniAuth": "统一认证登录",
+    "uniAuthFailed": "统一认证登录失败，请重试。",
     "oidcWith": "使用 {{name}} 继续",
     "oidcStartFailed": "无法启动单点登录",
     "oidcError": {

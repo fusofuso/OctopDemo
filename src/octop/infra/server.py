@@ -34,6 +34,7 @@ from octop.infra.utils.paths import PathLayout
 
 if TYPE_CHECKING:
     from octop.infra.auth.sso.service import SsoService
+    from octop.infra.auth.uni.service import UniAuthService
     from octop.infra.history.trajectory.service import TrajectoryService
 
 logger = logging.getLogger(__name__)
@@ -253,6 +254,7 @@ class OctopServer:
         self._started = False
         self._started_at: int | None = None
         self._sso_service: SsoService | None = None
+        self._uni_auth_service: UniAuthService | None = None
 
     # Backward compat: expose user_manager directly
     @property
@@ -273,6 +275,23 @@ class OctopServer:
         ):
             self._sso_service = SsoServiceCls(self.services, self.user_manager)
         return self._sso_service
+
+    @property
+    def uni_auth_service(self) -> UniAuthService:
+        """Process-level unified-auth service (caches the ``uni`` provider row id)."""
+        from octop.infra.auth.uni.service import (
+            UniAuthService as UniAuthServiceCls,  # noqa: PLC0415
+        )
+
+        if self.services is None or self.user_manager is None:
+            raise RuntimeError("unified-auth service requires a started server with user manager")
+        if (
+            self._uni_auth_service is None
+            or getattr(self._uni_auth_service, "_services", None) is not self.services
+            or getattr(self._uni_auth_service, "_user_manager", None) is not self.user_manager
+        ):
+            self._uni_auth_service = UniAuthServiceCls(self.services, self.user_manager)
+        return self._uni_auth_service
 
     @property
     def database_bound(self) -> bool:

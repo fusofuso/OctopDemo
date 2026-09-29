@@ -4807,6 +4807,8 @@
     "slideVerified": "Verified",
     "unsupportedCaptcha": "This captcha provider is not supported in this client. Use a supported client to sign in.",
     "or": "or",
+    "uniAuth": "Unified sign-in",
+    "uniAuthFailed": "Unified sign-in failed. Please retry.",
     "oidcWith": "Continue with {{name}}",
     "oidcStartFailed": "Could not start single sign-on",
     "oidcError": {

@@ -103,6 +103,29 @@ class BackupConfig:
     include_chats: bool = False
 
 
+@dataclass(frozen=True)
+class UniAuthConfig:
+    """Intranet unified-auth (CMS) token-relay settings.
+
+    The unified-auth token only proves *who* the caller is; Octop never derives
+    roles or permissions from it — those always come from the local user record.
+    ``verify_signature`` defaults to False because the CMS signing key is
+    typically not available to client systems. When the key can be obtained,
+    enable it and store the shared key under ``secret_repo["uni_auth"]``.
+    """
+
+    enabled: bool = False
+    # CMS login relay page, relative to the dashboard origin.
+    login_path: str = "/cmsCrm/crm/uni/oa/login"
+    # Extra suffix appended to the origin when building ``RETURN_HOST``.
+    return_host_suffix: str = "/cmsCrm"
+    # Expected ``iss`` / ``aud`` claims; an empty string disables that check.
+    issuer: str = "cms"
+    audience: str = "1001"
+    # True = verify the JWT signature using ``secret_repo["uni_auth"]``.
+    verify_signature: bool = False
+
+
 _VALID_MOBILE_BACKENDS = frozenset({"physical", "redroid", "emulator", "none"})
 
 
@@ -141,6 +164,7 @@ class OctopConfig:
     tls: TlsConfig = field(default_factory=TlsConfig)
     backup: BackupConfig = field(default_factory=BackupConfig)
     capabilities: CapabilitiesConfig = field(default_factory=CapabilitiesConfig)
+    uni_auth: UniAuthConfig = field(default_factory=UniAuthConfig)
     max_upload_mb: int = DEFAULT_MAX_UPLOAD_MB
     browser_idle_timeout_minutes: int = DEFAULT_BROWSER_IDLE_TIMEOUT_MINUTES
 
@@ -234,6 +258,22 @@ def _parse_backup_section(raw: object) -> BackupConfig:
         include_plugins=bool(raw.get("include_plugins", defaults.include_plugins)),
         include_knowledge=bool(raw.get("include_knowledge", defaults.include_knowledge)),
         include_chats=bool(raw.get("include_chats", defaults.include_chats)),
+    )
+
+
+def _parse_uni_auth_section(raw: object) -> UniAuthConfig:
+    if raw is None:
+        return UniAuthConfig()
+    if not isinstance(raw, dict):
+        raise ValueError("config.uni_auth must be an object")
+    defaults = UniAuthConfig()
+    return UniAuthConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        login_path=str(raw.get("login_path", defaults.login_path)).strip() or defaults.login_path,
+        return_host_suffix=str(raw.get("return_host_suffix", defaults.return_host_suffix)).strip(),
+        issuer=str(raw.get("issuer", defaults.issuer)).strip(),
+        audience=str(raw.get("audience", defaults.audience)).strip(),
+        verify_signature=bool(raw.get("verify_signature", defaults.verify_signature)),
     )
 
 
@@ -596,6 +636,19 @@ def load_config(path: Path) -> OctopConfig:
             include_chats=_coerce_bool("OCTOP_BACKUP_INCLUDE_CHATS", v, backup.include_chats),
         )
 
+    uni_auth = _parse_uni_auth_section(raw.get("uni_auth"))
+    if v := os.environ.get("OCTOP_UNI_AUTH_ENABLED"):
+        uni_auth = replace(
+            uni_auth, enabled=_coerce_bool("OCTOP_UNI_AUTH_ENABLED", v, uni_auth.enabled)
+        )
+    if v := os.environ.get("OCTOP_UNI_AUTH_VERIFY_SIGNATURE"):
+        uni_auth = replace(
+            uni_auth,
+            verify_signature=_coerce_bool(
+                "OCTOP_UNI_AUTH_VERIFY_SIGNATURE", v, uni_auth.verify_signature
+            ),
+        )
+
     return OctopConfig(
         bind_host=merged["bind_host"],
         port=int(merged["port"]),
@@ -620,6 +673,7 @@ def load_config(path: Path) -> OctopConfig:
         tls=_parse_tls_section(raw.get("tls")),
         backup=backup,
         capabilities=capabilities,
+        uni_auth=uni_auth,
         max_upload_mb=int(merged.get("max_upload_mb", DEFAULT_MAX_UPLOAD_MB)),
         browser_idle_timeout_minutes=max(
             0,

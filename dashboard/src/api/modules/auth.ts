@@ -86,6 +86,15 @@ export interface OidcStatus {
   display_name: string;
 }
 
+/** Intranet unified-auth (CMS) relay settings for the login page. */
+export interface UniAuthStatus {
+  enabled: boolean;
+  /** CMS relay page, relative to the dashboard origin. */
+  login_path: string;
+  /** Suffix appended to the origin when building ``RETURN_HOST``. */
+  return_host_suffix: string;
+}
+
 export interface OauthProviderStatus {
   kind: string;
   display_name: string;
@@ -203,6 +212,18 @@ export const authApi = {
 
   /** Return enabled dashboard SSO providers for the login page. */
   getOauthStatus: () => request<OauthStatus>("/auth/oauth/status"),
+
+  /** Return whether intranet unified-auth login is available. */
+  getUniStatus: () => request<UniAuthStatus>("/auth/uni/status"),
+
+  /** Exchange a CMS ``auth.token`` for the standard JWT login response. */
+  exchangeUniToken: async (token: string): Promise<LoginResponse> => {
+    const raw = await request<RawLoginResponse>("/auth/uni/exchange", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+    return { ...raw, token: raw.access_token };
+  },
 
   /** Start an OIDC authorization-code login flow. */
   startOidc: (redirect_after?: string) =>
