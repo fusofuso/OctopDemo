@@ -93,6 +93,39 @@ def test_normalize_streamable_http_and_stdio():
     assert stdio["enabled"] is False
 
 
+def test_normalize_sse_and_rejects_unknown_transport():
+    sse = normalize_server_spec(
+        "mcp_crm_info",
+        {
+            "transport": "sse",
+            "url": "http://crm.internal/sse",
+            "headers": {"Authorization": "Bearer t"},
+        },
+    )
+    assert sse["transport"] == "sse"
+    assert sse["url"] == "http://crm.internal/sse"
+    assert sse["headers"]["Authorization"] == "Bearer t"
+
+    with pytest.raises(ValueError, match="streamable_http, sse or stdio"):
+        normalize_server_spec("bad", {"transport": "websocket", "url": "wss://x/y"})
+
+
+def test_harness_spec_sse_keeps_headers_without_streamable_accept():
+    spec = harness_spec_for_server(
+        {
+            "transport": "sse",
+            "url": "http://crm.internal/sse",
+            "headers": {"Authorization": "Bearer x"},
+            "enabled": True,
+        }
+    )
+    assert spec == {
+        "transport": "sse",
+        "url": "http://crm.internal/sse",
+        "headers": {"Authorization": "Bearer x"},
+    }
+
+
 def test_shared_custom_server_uses_collision_safe_name_for_viewer(
     svc: ConnectorService,
     db: SqlitePool,

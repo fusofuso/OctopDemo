@@ -571,7 +571,11 @@ async def put_custom_mcp(
     except ConnectorNameTakenError as exc:
         _raise_name_taken(str(exc))
     except ValueError as exc:
-        raise OctopError(ErrorCode.CONNECTOR_INVALID_CREDENTIALS, str(exc)) from exc
+        raise OctopError(
+            ErrorCode.CONNECTOR_INVALID_CREDENTIALS,
+            str(exc),
+            details={"reason": str(exc)},
+        ) from exc
     server.services.audit_repo.write(
         actor=user.username,
         action="connector.custom_mcp.save",

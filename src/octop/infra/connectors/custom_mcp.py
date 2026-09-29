@@ -24,7 +24,7 @@ _HARNESS_STRIP_KEYS = _META_KEYS | _SECRET_KEYS
 _DISPLAY_NAME_MAX = 64
 _MCP_STREAMABLE_HTTP_ACCEPT = "application/json, text/event-stream"
 
-Transport = Literal["streamable_http", "stdio"]
+Transport = Literal["streamable_http", "sse", "stdio"]
 
 
 def is_custom_mcp_kind(kind: str) -> bool:
@@ -170,8 +170,8 @@ def normalize_server_spec(name: str, raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"server {name!r} must be an object")
     transport = str(raw.get("transport") or "").strip()
-    if transport not in ("streamable_http", "stdio", "http"):
-        raise ValueError(f"server {name!r}: transport must be streamable_http or stdio")
+    if transport not in ("streamable_http", "sse", "stdio", "http"):
+        raise ValueError(f"server {name!r}: transport must be streamable_http, sse or stdio")
     if transport == "http":
         transport = "streamable_http"
 
@@ -190,7 +190,7 @@ def normalize_server_spec(name: str, raw: Any) -> dict[str, Any]:
             )
         spec["display_name"] = display_name
 
-    if transport == "streamable_http":
+    if transport in ("streamable_http", "sse"):
         url = validate_mcp_http_url(str(raw.get("url") or ""))
         spec["url"] = url
         headers = _normalize_headers(raw.get("headers"))

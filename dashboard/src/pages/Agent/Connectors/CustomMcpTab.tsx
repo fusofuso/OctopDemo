@@ -408,7 +408,7 @@ export function CustomMcpTab({ focusServerName }: CustomMcpTabProps) {
       );
       if (probeOnSave && showProbeSection) {
         for (const card of nextCards) {
-          if (card.transport !== "streamable_http" || !card.url.trim()) {
+          if (card.transport === "stdio" || !card.url.trim()) {
             continue;
           }
           await runProbe(card, { byName: true, fromSave: true });
@@ -570,6 +570,7 @@ export function CustomMcpTab({ focusServerName }: CustomMcpTabProps) {
   const transportOptions = useMemo(
     () => [
       { value: "streamable_http", label: "streamable_http" },
+      { value: "sse", label: "sse" },
       { value: "stdio", label: "stdio" },
     ],
     [],

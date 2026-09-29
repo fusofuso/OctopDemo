@@ -51,10 +51,11 @@ export function CustomMcpServerCard({
 }: CustomMcpServerCardProps) {
   const { t } = useTranslation();
   const { modal } = App.useApp();
-  const isHttp = card.transport === "streamable_http";
+  const isUrlBased = card.transport !== "stdio";
+  const isStreamableHttp = card.transport === "streamable_http";
   const label = friendlyServerLabel(card);
   const accent = accentForServerName(card.name.trim() || label);
-  const summary = isHttp
+  const summary = isUrlBased
     ? card.url.trim() || "https://…"
     : [
         card.command.trim(),
@@ -83,10 +84,11 @@ export function CustomMcpServerCard({
     });
   };
 
-  const authPending = isHttp && oauthAvailable && !card.oauthConfigured;
+  const authPending =
+    isStreamableHttp && oauthAvailable && !card.oauthConfigured;
   const effectiveEnabled = !authPending && card.enabled;
   const showOAuthConnectLink =
-    isHttp && card.collapsed && authPending && onAuthorize;
+    isStreamableHttp && card.collapsed && authPending && onAuthorize;
   const connectLabel = t("connectors.clickToConnect", "点击连接");
 
   const handleConnectClick = () => {
@@ -121,14 +123,16 @@ export function CustomMcpServerCard({
             </span>
             <span
               className={`${styles.customMcpTransportBadge} ${
-                isHttp
+                isUrlBased
                   ? styles.customMcpTransportHttp
                   : styles.customMcpTransportStdio
               }`}
             >
-              {isHttp
-                ? t("connectors.customMcp.transportHttp", "HTTP")
-                : t("connectors.customMcp.transportStdio", "Stdio")}
+              {!isUrlBased
+                ? t("connectors.customMcp.transportStdio", "Stdio")
+                : card.transport === "sse"
+                ? "SSE"
+                : t("connectors.customMcp.transportHttp", "HTTP")}
             </span>
             <div className={styles.customMcpServerSummary} title={summary}>
               {card.displayName.trim() && card.name.trim()
@@ -216,7 +220,7 @@ export function CustomMcpServerCard({
             <Input
               value={card.name}
               onChange={(e) => onUpdate(card.key, { name: e.target.value })}
-              placeholder={isHttp ? "http-server" : "stdio-server"}
+              placeholder={isUrlBased ? "http-server" : "stdio-server"}
             />
             <div className={styles.customMcpFieldHint}>
               {t(
@@ -237,7 +241,7 @@ export function CustomMcpServerCard({
             />
           </div>
 
-          {isHttp ? (
+          {isUrlBased ? (
             <>
               <div className={styles.customMcpField}>
                 <label>
@@ -373,7 +377,7 @@ export function CustomMcpServerCard({
             ) : null}
           </div>
 
-          {isHttp && card.oauthConfigured ? (
+          {isStreamableHttp && card.oauthConfigured ? (
             <Alert
               type="success"
               showIcon
@@ -384,7 +388,7 @@ export function CustomMcpServerCard({
             />
           ) : null}
 
-          {isHttp && oauthAvailable && !card.oauthConfigured ? (
+          {isStreamableHttp && oauthAvailable && !card.oauthConfigured ? (
             <Alert
               type="warning"
               showIcon
@@ -411,7 +415,7 @@ export function CustomMcpServerCard({
             />
           ) : null}
 
-          {isHttp ? (
+          {isUrlBased ? (
             <div className={styles.customMcpCardActions}>
               <Button
                 icon={<Activity size={14} />}
@@ -423,7 +427,7 @@ export function CustomMcpServerCard({
             </div>
           ) : null}
 
-          {isHttp && probeTools !== undefined ? (
+          {isUrlBased && probeTools !== undefined ? (
             <div className={styles.probeResult}>
               <div className={styles.probeResultHeader}>
                 <CheckCircle2

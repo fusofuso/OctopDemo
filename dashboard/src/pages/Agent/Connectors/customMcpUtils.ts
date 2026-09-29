@@ -118,7 +118,12 @@ export function serversToCards(servers: CustomMcpServers): ServerCardState[] {
     key: `${name}-${index}`,
     name,
     displayName: (spec.display_name ?? "").trim(),
-    transport: spec.transport === "stdio" ? "stdio" : "streamable_http",
+    transport:
+      spec.transport === "stdio"
+        ? "stdio"
+        : spec.transport === "sse"
+        ? "sse"
+        : "streamable_http",
     url: spec.url ?? "",
     headersText: headersToText(spec.headers),
     command: spec.command ?? "",
@@ -157,7 +162,7 @@ export function cardsToServers(cards: ServerCardState[]): CustomMcpServers {
     if (card.shared) {
       spec.shared = true;
     }
-    if (card.transport === "streamable_http") {
+    if (card.transport !== "stdio") {
       spec.url = card.url.trim();
       const headers = parseHeadersText(card.headersText);
       if (Object.keys(headers).length > 0) {
@@ -187,7 +192,7 @@ export function hasHttpProbeTargets(
   cards: ServerCardState[] | CustomMcpServers,
 ): boolean {
   if (Array.isArray(cards)) {
-    return cards.some((card) => card.transport === "streamable_http");
+    return cards.some((card) => card.transport !== "stdio");
   }
   return Object.values(cards).some(
     (spec) =>

@@ -125,7 +125,7 @@ export interface WeKnoraLocalDetection {
   console_url?: string;
 }
 
-export type CustomMcpTransport = "streamable_http" | "stdio";
+export type CustomMcpTransport = "streamable_http" | "sse" | "stdio";
 
 export interface CustomMcpOAuthPreview {
   configured?: boolean;

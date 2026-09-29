@@ -214,6 +214,12 @@ def _unwrap_probe_exception_group(exc: BaseExceptionGroup, *, kind: str) -> dict
             return _probe_mcp_http_error(sub, kind=kind)
         if isinstance(sub, McpError):
             return _probe_mcp_mcp_error(sub, kind=kind)
+        if isinstance(sub, httpx.TransportError):
+            return {
+                "ok": False,
+                "error_type": "connection",
+                "error": f"无法连接 MCP 服务：{sub}",
+            }
     for sub in exc.exceptions:
         if isinstance(sub, BaseExceptionGroup):
             nested = _unwrap_probe_exception_group(sub, kind=kind)
@@ -526,6 +532,11 @@ async def probe_custom_mcp_server(spec: dict[str, Any]) -> dict[str, Any]:
         headers.setdefault("Accept", "application/json, text/event-stream")
         result = await probe_streamable_http_mcp(url, headers, kind="custom-mcp")
         return await _maybe_attach_oauth_discovery(result, url=url, headers=headers)
+
+    if transport == "sse":
+        url = str(connection["url"])
+        headers = {str(k): str(v) for k, v in dict(connection.get("headers") or {}).items()}
+        return await _probe_mcp_sse(url, headers, kind="custom-mcp")
 
     if transport == "stdio":
         return await _probe_stdio_mcp(connection)
